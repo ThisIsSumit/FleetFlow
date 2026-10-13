@@ -26,4 +26,4 @@ export function NotificationList({ limit = 30, onNavigate }: { limit?: number; o
           {!n.read && <button className="text-xs text-primary hover:underline" onClick={() => read.mutate(n.id)}>Mark read</button>}</div></li>))}</ul>}
   </div>)
 }
-export const NotificationsPage = () => (<div className="space-y-4"><h1 className="text-2xl font-semibold tracking-tight">Notifications</h1><div className="rounded-xl border bg-card shadow-sm"><NotificationList limit={100} /></div></div>)
+export const NotificationsPage = () => (<div className="space-y-4"><h1 className="text-2xl font-semibold tracking-tight">Notifications</h1><div className="rounded-2xl border border-[#272727] bg-[#181818] shadow-sm shadow-black/20"><NotificationList limit={100} /></div></div>)

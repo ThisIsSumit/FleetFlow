@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn'
 export function Tabs({ tabs, value, onChange }: { tabs: { id: string; label: string }[]; value: string; onChange: (id: string) => void }) {
   return (<div role="tablist" className="flex gap-1 overflow-x-auto border-b">{tabs.map((t) => (
     <button key={t.id} role="tab" aria-selected={value === t.id} onClick={() => onChange(t.id)}
-      className={cn('whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium', value === t.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{t.label}</button>))}</div>)
+      className={cn('whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]', value === t.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{t.label}</button>))}</div>)
 }
 export function ConfirmDialog({ open, title, message, confirmLabel = 'Confirm', danger, loading, onConfirm, onClose }:
   { open: boolean; title: string; message: string; confirmLabel?: string; danger?: boolean; loading?: boolean; onConfirm: () => void; onClose: () => void }) {
@@ -20,7 +20,7 @@ export function Drawer({ open, onClose, title, children }: { open: boolean; onCl
   useEffect(() => { if (!open) return; const k = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current(); document.addEventListener('keydown', k); return () => document.removeEventListener('keydown', k) }, [open])
   if (!open) return null
   return (<div className="fixed inset-0 z-50"><div className="absolute inset-0 bg-black/40" onClick={onClose} />
-    <aside role="dialog" aria-modal="true" aria-label={title} className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l bg-card shadow-xl">
+    <aside role="dialog" aria-modal="true" aria-label={title} className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l bg-card shadow-2xl shadow-black/40">
       <div className="flex items-center justify-between border-b px-4 py-3"><h2 className="font-semibold">{title}</h2><button aria-label="Close" onClick={onClose} className="rounded-md p-1 hover:bg-muted"><X className="h-4 w-4" /></button></div>
       <div className="flex-1 overflow-y-auto">{children}</div></aside></div>)
 }

@@ -13,7 +13,7 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   }, [open])
   if (!open) return null
   return (<div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:p-10" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-    <div ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} className={`w-full rounded-xl border bg-card shadow-xl ${wide ? 'max-w-2xl' : 'max-w-md'}`}>
+    <div ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} className={`w-full rounded-2xl border bg-card shadow-2xl shadow-black/40 ${wide ? 'max-w-2xl' : 'max-w-md'}`}>
       <div className="flex items-center justify-between border-b px-5 py-3"><h2 className="font-semibold">{title}</h2>
         <button aria-label="Close" onClick={onClose} className="rounded-md p-1 hover:bg-muted"><X className="h-4 w-4" /></button></div>
       <div className="p-5">{children}</div>

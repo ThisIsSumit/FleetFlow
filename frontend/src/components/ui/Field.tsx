@@ -1,6 +1,6 @@
 import { forwardRef, useId, type InputHTMLAttributes, type SelectHTMLAttributes } from 'react'
 import { cn } from '@/lib/cn'
-const base = 'h-10 w-full rounded-lg border bg-card px-3 text-sm placeholder:text-muted-foreground disabled:opacity-50'
+const base = 'h-10 w-full rounded-xl border bg-card px-3 text-sm placeholder:text-muted-foreground transition-colors focus:border-foreground/50 disabled:opacity-50'
 interface FieldProps { label?: string; error?: string; hint?: string }
 function Wrap({ id, label, error, hint, children }: FieldProps & { id: string; children: React.ReactNode }) {
   return (<div className="space-y-1.5">
