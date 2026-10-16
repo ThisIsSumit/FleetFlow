@@ -9,15 +9,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.*;
 import java.time.Instant;
 import java.util.*;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 @Service
 public class DispatchTx {
   static final Set<OrderStatus> ACTIVE = EnumSet.of(OrderStatus.ASSIGNED, OrderStatus.ARRIVED, OrderStatus.IN_TRANSIT);
   private final DriverRepository drivers; private final OrderRepository orders; private final OrderEventRepository events;
-  private final OutboxService outbox; private final SettingsService settings;
+  private final OutboxService outbox; private final SettingsService settings; private final EntityManager em;
   @Autowired private com.fleetflow.ops.FaultInjector faults;
   @Autowired private com.fleetflow.ops.FleetMetrics metrics;
   @Autowired private NotificationRequester requester;
-  public DispatchTx(DriverRepository d, OrderRepository o, OrderEventRepository e, OutboxService ob, SettingsService s) { drivers = d; orders = o; events = e; outbox = ob; settings = s; }
+  public DispatchTx(DriverRepository d, OrderRepository o, OrderEventRepository e, OutboxService ob, SettingsService s, EntityManager em) {
+    drivers = d; orders = o; events = e; outbox = ob; settings = s; this.em = em;
+  }
 
   private void timeline(DeliveryOrder o, OrderStatus from, OrderStatus to, UUID eventId) {
     var e = new OrderEvent(); e.organizationId = o.organizationId; e.orderId = o.id; e.fromStatus = from; e.toStatus = to; e.eventId = eventId; events.save(e);
@@ -34,11 +38,16 @@ public class DispatchTx {
   /**
    * The atomic assignment. REQUIRES_NEW so the commit happens BEFORE the Redis lock is released by the caller.
    * Correctness comes from (1) the row lock on the driver, (2) workload counted under that lock, (3) @Version on the order.
+   * The row lock is taken via EntityManager.find(..., PESSIMISTIC_WRITE) rather than a @Lock/@Query repository method:
+   * Hibernate 6.5 silently compiles this simple a "by id" JPQL shape down to a native query, and JPA forbids setting
+   * a lock mode on a native query, so the Spring Data @Lock annotation throws IllegalStateException at runtime.
+   * EntityManager.find is the spec-supported path and is unaffected by that optimization.
    */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public boolean assign(UUID org, UUID orderId, UUID driverId) {
     faults.maybeFail(com.fleetflow.ops.FaultInjector.Fault.DB_TIMEOUT);
-    var d = drivers.lockByIdAndOrg(driverId, org).orElse(null);
+    var d = em.find(Driver.class, driverId, LockModeType.PESSIMISTIC_WRITE);
+    if (d != null && !d.organizationId.equals(org)) d = null; // cross-tenant id behaves like "not found"
     if (d == null || d.status != DriverStatus.AVAILABLE) return false;
     var o = orders.findByIdAndOrganizationId(orderId, org).orElse(null);
     if (o == null || o.status != OrderStatus.DISPATCH_REQUESTED) return false;

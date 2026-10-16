@@ -28,9 +28,10 @@ public class FleetRepos {
     Optional<Driver> findByUserIdAndOrganizationId(UUID userId, UUID org);
     List<Driver> findByOrganizationIdAndVehicleIdIn(UUID org, Collection<UUID> vehicleIds);
     /** Row lock: serialises every assignment to one driver at the database level. */
-    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
-    @Query(value = "select * from drivers where id = :id and organization_id = :org for update", nativeQuery = true)
-    Optional<Driver> lockByIdAndOrg(@org.springframework.data.repository.query.Param("id") UUID id, @org.springframework.data.repository.query.Param("org") UUID org);
+//    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+//    @Query(value = "select * from drivers where id = :id and organization_id = :org for update", nativeQuery = true)
+//    Optional<Driver> lockByIdAndOrg(@org.springframework.data.repository.query.Param("id") UUID id, @org.springframework.data.repository.query.Param("org") UUID org);
+//
   }
   public interface OrderRepository extends JpaRepository<DeliveryOrder, UUID>, JpaSpecificationExecutor<DeliveryOrder> {
     Optional<DeliveryOrder> findByIdAndOrganizationId(UUID id, UUID org);

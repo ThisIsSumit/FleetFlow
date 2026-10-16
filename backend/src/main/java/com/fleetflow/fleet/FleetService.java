@@ -8,6 +8,8 @@ import com.fleetflow.fleet.FleetDtos.*;
 import com.fleetflow.fleet.FleetRepos.*;
 import com.fleetflow.outbox.*;
 import com.fleetflow.security.*;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
@@ -23,16 +25,24 @@ public class FleetService {
   private static final Set<OrderStatus> MANUAL = EnumSet.of(OrderStatus.ARRIVED, OrderStatus.IN_TRANSIT, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.FAILED);
   private final VehicleRepository vehicles; private final DriverRepository drivers; private final OrderRepository orders;
   private final OrderEventRepository orderEvents; private final OutboxService outbox; private final ObjectMapper om;
-  private final com.fleetflow.dispatch.DriverGeoService geo;
+  private final com.fleetflow.dispatch.DriverGeoService geo; private final EntityManager em;
   @org.springframework.beans.factory.annotation.Autowired private com.fleetflow.ops.FleetMetrics metrics;
 
-  public FleetService(VehicleRepository v, DriverRepository d, OrderRepository o, OrderEventRepository oe, OutboxService ob, ObjectMapper om, com.fleetflow.dispatch.DriverGeoService geo) {
-    this.vehicles = v; this.drivers = d; this.orders = o; this.orderEvents = oe; this.outbox = ob; this.om = om; this.geo = geo;
+  public FleetService(VehicleRepository v, DriverRepository d, OrderRepository o, OrderEventRepository oe, OutboxService ob, ObjectMapper om, com.fleetflow.dispatch.DriverGeoService geo, EntityManager em) {
+    this.vehicles = v; this.drivers = d; this.orders = o; this.orderEvents = oe; this.outbox = ob; this.om = om; this.geo = geo; this.em = em;
   }
   private static ApiException notFound(String what) { return new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", what + " not found"); }
   private static Pageable page(int page, int size, String sort) {
     Set<String> ok = Set.of("createdAt", "priority", "status", "customerName");
     return PageRequest.of(Math.max(0, page), Math.min(Math.max(1, size), 100), Sort.by(Sort.Direction.DESC, ok.contains(sort) ? sort : "createdAt"));
+  }
+  /** Row lock via EntityManager.find, not a @Lock/@Query repository method: Hibernate 6.5 silently compiles a simple
+   *  "by id" JPQL shape down to a native query, and JPA forbids a lock mode on a native query, so @Lock throws
+   *  IllegalStateException at runtime. EntityManager.find is the spec-supported path and is unaffected. Returns null
+   *  (not just absent) for a cross-tenant id, so callers treat it exactly like "not found". */
+  private Driver lockDriver(UUID id, UUID org) {
+    var d = em.find(Driver.class, id, LockModeType.PESSIMISTIC_WRITE);
+    return (d != null && d.organizationId.equals(org)) ? d : null;
   }
 
   // ---- vehicles ----
@@ -110,7 +120,8 @@ public class FleetService {
   @Transactional public DriverDto setOwnStatus(DriverStatus s) {
     var p = TenantContext.current(); var own = ownDriver(p);
     if (s != DriverStatus.AVAILABLE && s != DriverStatus.OFFLINE && s != DriverStatus.ON_BREAK) throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_STATUS", "Choose available, on break or offline");
-    var d = drivers.lockByIdAndOrg(own.id, p.organizationId()).orElseThrow(() -> notFound("Driver"));
+    var d = lockDriver(own.id, p.organizationId());
+    if (d == null) throw notFound("Driver");
     long active = orders.countByDriverIdAndStatusIn(d.id, ACTIVE_ORDER);
     if (s != DriverStatus.AVAILABLE && active > 0) throw new ApiException(HttpStatus.CONFLICT, "ACTIVE_DELIVERIES", "Finish your active deliveries before going offline or on break");
     if (s == DriverStatus.AVAILABLE && active >= settings.get(p.organizationId()).maxWorkload()) throw new ApiException(HttpStatus.CONFLICT, "AT_CAPACITY", "You are at your delivery limit");
@@ -132,7 +143,7 @@ public class FleetService {
     List<Item> items;
     try { items = om.readValue(o.items, new TypeReference<>() {}); } catch (Exception e) { items = List.of(); }
     return new OrderDto(o.id, o.customerName, o.customerPhone, o.pickupAddress, o.pickupLat, o.pickupLng, o.dropAddress, o.dropLat, o.dropLng,
-        items, o.priority, o.vehicleRequirement, o.scheduledAt, o.status, o.driverId, o.createdAt, o.updatedAt);
+            items, o.priority, o.vehicleRequirement, o.scheduledAt, o.status, o.driverId, o.createdAt, o.updatedAt);
   }
   /** Order row + timeline row + outbox row commit atomically. Kafka is never touched inside the transaction. */
   @Transactional
@@ -166,8 +177,10 @@ public class FleetService {
     if (!MANUAL.contains(to)) throw new ApiException(HttpStatus.BAD_REQUEST, "SYSTEM_CONTROLLED", to + " is set by the dispatch engine");
     OrderStateMachine.require(o.status, to);
     OrderStatus from = o.status; o.status = to; o.updatedAt = Instant.now();
-    if (o.driverId != null && (to == OrderStatus.DELIVERED || to == OrderStatus.CANCELLED || to == OrderStatus.FAILED))
-      drivers.lockByIdAndOrg(o.driverId, o.organizationId).ifPresent(d -> { if (d.status == DriverStatus.BUSY) d.status = DriverStatus.AVAILABLE; });
+    if (o.driverId != null && (to == OrderStatus.DELIVERED || to == OrderStatus.CANCELLED || to == OrderStatus.FAILED)) {
+      var d = lockDriver(o.driverId, o.organizationId);
+      if (d != null && d.status == DriverStatus.BUSY) d.status = DriverStatus.AVAILABLE;
+    }
     // topics are fixed by the spec, so ARRIVED and FAILED ride on the nearest lifecycle topic with a distinct eventType
     String[] m = switch (to) {
       case ARRIVED -> new String[]{"DRIVER_ARRIVED", Topics.DELIVERY_STARTED};
@@ -186,7 +199,7 @@ public class FleetService {
     UUID org = TenantContext.organizationId();
     var o = orders.findByIdAndOrganizationId(id, org).orElseThrow(() -> notFound("Order"));
     var tl = orderEvents.findByOrderIdAndOrganizationIdOrderByCreatedAtAsc(id, org).stream()
-        .map(e -> new TimelineEntry(e.fromStatus, e.toStatus, e.actorUserId, e.eventId, e.createdAt)).toList();
+            .map(e -> new TimelineEntry(e.fromStatus, e.toStatus, e.actorUserId, e.eventId, e.createdAt)).toList();
     return new OrderDetail(orderDto(o), tl);
   }
   @Transactional(readOnly = true)

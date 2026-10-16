@@ -18,7 +18,7 @@ public class OutboxRelay {
   @Scheduled(fixedDelayString = "${fleetflow.outbox.poll-ms:500}")
   @Transactional
   public void drain() {
-    for (var e : repo.lockBatch(100)) {
+    for (var e : repo.lockBatch(30)) {
       try {
         faults.maybeFail(com.fleetflow.ops.FaultInjector.Fault.KAFKA_UNAVAILABLE);
         publisher.publish(e.topic, e.partitionKey, e.payload);

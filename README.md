@@ -56,7 +56,7 @@ State change and `outbox_events` row commit together; the relay polls with `SKIP
 Micrometer -> Prometheus -> Grafana dashboard (API, Kafka, Dispatch, Infrastructure). Correlation ids flow from HTTP into event envelopes. See [docs/observability.md](docs/observability.md).
 
 ## Load testing
-Script: `load-tests/create-orders.js` (k6, constant arrival rate). Run at 100, 500 and 1000 orders/sec with `RATE_LIMIT_ORDERS=1000000` on the backend, and record real results here. **No results exist yet; this table is intentionally empty.**
+Script: `load-tests/create-orders.js` (k6, constant arrival rate). Run at 100, 500 and 1000 orders/sec with `RATE_LIMIT_ORDERS=1000000` on the backend, and record real results here. For a 10,000 orders/sec target, size the backend and database first, then provide enough k6 VUs for the observed latency. For example, `RATE=10000 PREALLOCATED_VUS=10000 MAX_VUS=100000`. `MAX_VUS` must be at least `PREALLOCATED_VUS`; if backend latency rises, k6 will otherwise report dropped iterations. **No results exist yet; this table is intentionally empty.**
 
 | Rate | Requests/sec achieved | p50 | p95 | p99 | Error rate | Max Kafka lag | Dispatch latency p95 |
 |---|---|---|---|---|---|---|---|
