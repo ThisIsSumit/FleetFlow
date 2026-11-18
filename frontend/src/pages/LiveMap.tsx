@@ -40,20 +40,37 @@ export function LiveMap() {
   }, [])
   const positions = useMemo(() => { const out: Record<string, [number, number]> = {}
     snap.data?.drivers.forEach((d) => { if (d.lat != null && d.lng != null) out[d.id] = [d.lat, d.lng] }); return { ...out, ...live } }, [snap.data, live])
+  const posRef = useRef(positions); posRef.current = positions
+  const drivers_ = useRef<Record<string, LiveDriver>>({}), orders_ = useRef<Record<string, LiveOrder>>({})
+  /** Creates or updates one driver marker in place. Markers are never rebuilt on a location ping, so an open popup stays open. */
+  const place = (d: LiveDriver, pos: [number, number]) => {
+    const html = `<div style="width:18px;height:18px;border-radius:50%;background:${COLOR[d.status] ?? '#6b7280'};border:3px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3)"></div>`
+    const content = popup(d, d.currentOrderId ? orders_.current[d.currentOrderId] : undefined, pos)
+    const mk = markers.current[d.id]
+    if (mk) { mk.setLatLng(pos); if ((mk.options.icon as L.DivIcon | undefined)?.options.html !== html) mk.setIcon(L.divIcon({ className: '', iconSize: [18, 18], html })); mk.setPopupContent(content); return }
+    const created = L.marker(pos, { icon: L.divIcon({ className: '', iconSize: [18, 18], html }), title: d.name }).bindPopup(content)
+    cluster.current!.addLayer(created); markers.current[d.id] = created
+  }
+  // Snapshot (every 15 s): redraw order overlays, reconcile the set of driver markers.
   useEffect(() => {
     if (!snap.data || !map.current) return
-    cluster.current!.clearLayers(); overlay.current!.clearLayers(); markers.current = {}
-    const byId = Object.fromEntries(snap.data.orders.map((o) => [o.id, o]))
+    overlay.current!.clearLayers()
+    orders_.current = Object.fromEntries(snap.data.orders.map((o) => [o.id, o]))
     snap.data.orders.forEach((o) => {
       L.circleMarker([o.pickupLat, o.pickupLng], { radius: 5, color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.9 }).bindTooltip(`Pickup · ${o.customerName}`).addTo(overlay.current!)
       L.circleMarker([o.dropLat, o.dropLng], { radius: 5, color: '#7c3aed', fillColor: '#fff', fillOpacity: 1 }).bindTooltip(`Drop · ${o.customerName}`).addTo(overlay.current!)
       if (o.driverId) L.polyline([[o.pickupLat, o.pickupLng], [o.dropLat, o.dropLng]], { color: '#94a3b8', weight: 1.5, dashArray: '4 6' }).addTo(overlay.current!)
     })
-    snap.data.drivers.forEach((d) => { const pos = positions[d.id]; if (!pos) return
-      const icon = L.divIcon({ className: '', iconSize: [18, 18], html: `<div style="width:18px;height:18px;border-radius:50%;background:${COLOR[d.status] ?? '#6b7280'};border:3px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3)"></div>` })
-      const mk = L.marker(pos, { icon, title: d.name }).bindPopup(popup(d, d.currentOrderId ? byId[d.currentOrderId] : undefined, pos)); cluster.current!.addLayer(mk); markers.current[d.id] = mk })
-    if (!fitted.current) { const pts = Object.values(positions); if (pts.length) { map.current.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 13 }); fitted.current = true } }
-  }, [snap.data, positions])
+    drivers_.current = Object.fromEntries(snap.data.drivers.map((d) => [d.id, d]))
+    for (const id of Object.keys(markers.current)) if (!drivers_.current[id] || !posRef.current[id]) { cluster.current!.removeLayer(markers.current[id]); delete markers.current[id] }
+    snap.data.drivers.forEach((d) => { const pos = posRef.current[d.id]; if (pos) place(d, pos) })
+    if (!fitted.current) { const pts = Object.values(posRef.current); if (pts.length) { map.current.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 13 }); fitted.current = true } }
+  }, [snap.data]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Live pings: move markers in place.
+  useEffect(() => {
+    if (!map.current || !cluster.current) return
+    for (const [id, pos] of Object.entries(live)) { const d = drivers_.current[id]; if (d) place(d, pos) }
+  }, [live]) // eslint-disable-line react-hooks/exhaustive-deps
   const focus = (d: LiveDriver) => { setSelected(d.id); const p = positions[d.id]; if (p && map.current) { map.current.flyTo(p, 15); cluster.current?.zoomToShowLayer(markers.current[d.id], () => markers.current[d.id]?.openPopup()) } }
   const drivers = snap.data?.drivers ?? []
   return (<div className="space-y-4">

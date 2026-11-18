@@ -26,13 +26,13 @@ Frontend: React 18, Vite, TypeScript, React Router, TanStack Query, Zustand (aut
 Infra: Docker Compose, Prometheus, Grafana, redis_exporter, GitHub Actions.
 
 ## Authentication
-Access JWT in memory; refresh token as HttpOnly SameSite=Strict cookie, stored hashed, rotated on every use; replaying a rotated token revokes all sessions. Details and known limits in [docs/authentication.md](docs/authentication.md).
+Access JWT in memory; refresh token as HttpOnly SameSite=Strict cookie, stored hashed, rotated on every use; replaying a rotated token revokes all sessions (a 30 s grace window covers concurrent refreshes from several tabs); revoked sessions stop working immediately via a Redis denylist. Details and known limits in [docs/authentication.md](docs/authentication.md).
 
 ## Multi-tenancy
 Shared schema with `organization_id` everywhere; tenant derived from the JWT only; foreign ids return 404. Row-level security is enabled as a second layer for a non-superuser app role (ADR-011). See [docs/multi-tenancy.md](docs/multi-tenancy.md).
 
 ## Kafka architecture
-Nine spec topics plus two DLQs, keyed by `orderId` (locations by `driverId`), uniform event envelope with `correlationId`. `driver.unavailable` (driver goes offline/on break -> waiting orders are reassigned) and `notification.requested` (all notifications flow through it) are now produced and consumed. See [docs/kafka.md](docs/kafka.md).
+Nine spec topics plus a DLQ per consumed topic, keyed by `orderId` (locations by `driverId`), uniform event envelope with `correlationId`. `driver.unavailable` (driver goes offline/on break -> waiting orders are reassigned) and `notification.requested` (all notifications flow through it) are now produced and consumed. See [docs/kafka.md](docs/kafka.md).
 
 ## Redis architecture
 GEO index per organization with freshness tracking (stale drivers are skipped, then evicted), per-driver assignment locks, fixed-window rate limits, a read-through cache with hit/miss metrics (dispatch settings, dashboard summary, geocoder), pub/sub for WebSocket fan-out. See [docs/redis.md](docs/redis.md).
@@ -77,7 +77,7 @@ cd frontend && npm install && npm run dev     # http://localhost:5173
 URLs: app 5173, API 8080 (Swagger UI `/swagger-ui.html`), Kafka UI 8081, Prometheus 9090, Grafana 3000, Mailpit inbox 8025.
 The backend container connects as the non-superuser role `fleetflow_app` so row-level security applies; the role is created by `infrastructure/postgres/01-app-role.sh` on a **fresh** database volume (`docker compose down -v` if you already have one). Running the backend outside Docker as the Postgres superuser works but RLS is then bypassed.
 Demo login (after `SEED_DEMO=true`): `demo@fleetflow.dev` (owner), `dispatcher@fleetflow.dev`, `admin@fleetflow.dev`, `driver@fleetflow.dev` (opens the driver app), password = `DEMO_PASSWORD` (or a random one printed once in the backend log). Data is fictional. Seeded in-flight "awaiting dispatch" orders get dispatched by the sweeper after ~30 s.
-Without Docker for the backend: `EVENTS_PUBLISHER=log` (default) logs events instead of using Kafka; dispatch consumers are then inactive.
+Without Docker for the backend: `EVENTS_PUBLISHER=log` (default) logs events instead of using Kafka and handles them in-process (dispatch, reassignment, notifications), single instance only and without retries/DLQ. Set `EVENTS_LOCAL_DELIVERY=false` to only log them.
 Emails (verification, reset, invitations) go to Mailpit in compose (http://localhost:8025). Outside compose the default provider only logs them. See [docs/integrations.md](docs/integrations.md) for real SMTP, address search and map tiles.
 
 ## Environment variables

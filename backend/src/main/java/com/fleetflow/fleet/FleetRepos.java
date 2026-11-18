@@ -38,6 +38,10 @@ public class FleetRepos {
     List<DeliveryOrder> findByDriverIdAndOrganizationIdAndStatusIn(UUID driverId, UUID org, Collection<Enums.OrderStatus> statuses);
     long countByDriverIdAndStatusIn(UUID driverId, Collection<Enums.OrderStatus> statuses);
     List<DeliveryOrder> findTop100ByStatusAndUpdatedAtBefore(Enums.OrderStatus status, java.time.Instant before);
+    /** Orders waiting for a driver in organizations that use auto-dispatch (no settings row = defaults = on). Oldest first. */
+    @Query(value = "SELECT o.id FROM orders o LEFT JOIN dispatch_settings s ON s.organization_id = o.organization_id " +
+        "WHERE o.status = 'DISPATCH_REQUESTED' AND o.updated_at < :before AND COALESCE(s.auto_dispatch, TRUE) ORDER BY o.updated_at LIMIT 100", nativeQuery = true)
+    List<UUID> findSweepableIds(@org.springframework.data.repository.query.Param("before") java.time.Instant before);
   }
   public interface OrderEventRepository extends JpaRepository<OrderEvent, UUID> {
     List<OrderEvent> findByOrderIdAndOrganizationIdOrderByCreatedAtAsc(UUID orderId, UUID org);

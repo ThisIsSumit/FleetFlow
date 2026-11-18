@@ -9,7 +9,9 @@
   <groupId>com.fleetflow</groupId>
   <artifactId>fleetflow-backend</artifactId>
   <version>0.1.0</version>
-  <properties><java.version>21</java.version><jjwt.version>0.12.6</jjwt.version></properties>
+  <properties><java.version>21</java.version><jjwt.version>0.12.6</jjwt.version>
+    <!-- 1.19.x (Boot 3.3 default) cannot talk to Docker Engine 29+ (API version too old) -->
+    <testcontainers.version>1.21.4</testcontainers.version></properties>
   <dependencies>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
@@ -34,11 +36,12 @@
     <dependency><groupId>org.testcontainers</groupId><artifactId>postgresql</artifactId><scope>test</scope></dependency>
     <dependency><groupId>org.testcontainers</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
     <dependency><groupId>org.testcontainers</groupId><artifactId>kafka</artifactId><scope>test</scope></dependency>
-    <dependency>
-    <groupId>com.resend</groupId>
-    <artifactId>resend-java</artifactId>
-    <version>LATEST</version>
-</dependency>
+    <dependency><groupId>com.resend</groupId><artifactId>resend-java</artifactId><version>4.30.0</version></dependency>
   </dependencies>
-  <build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>
+  <build><plugins>
+    <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
+    <!-- Runs the *IT integration tests during `mvn verify` (surefire only runs *Test). Version and goals come from the Boot parent. -->
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-failsafe-plugin</artifactId>
+      <executions><execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution></executions></plugin>
+  </plugins></build>
 </project>

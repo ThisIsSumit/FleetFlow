@@ -18,7 +18,9 @@ public class KafkaConfig {
   @Bean KafkaAdmin.NewTopics topics() {
     var all = new java.util.ArrayList<NewTopic>();
     for (String t : TOPICS) all.add(TopicBuilder.name(t).partitions(3).replicas(1).build()); // keyed by orderId: per-order ordering, cross-order parallelism
-    for (String t : List.of(Topics.ORDER_CREATED, Topics.DISPATCH_REQUESTED, Topics.DRIVER_UNAVAILABLE, Topics.NOTIFICATION)) all.add(TopicBuilder.name(t + ".DLQ").partitions(1).replicas(1).build());
+    // one DLQ per consumed topic (the error handler routes to "<topic>.DLQ"; relying on broker auto-create breaks when it is disabled)
+    for (String t : List.of(Topics.ORDER_CREATED, Topics.DISPATCH_REQUESTED, Topics.DRIVER_UNAVAILABLE, Topics.NOTIFICATION,
+        Topics.DRIVER_ASSIGNED, Topics.DELIVERY_COMPLETED, Topics.DELIVERY_CANCELLED)) all.add(TopicBuilder.name(t + ".DLQ").partitions(1).replicas(1).build());
     return new KafkaAdmin.NewTopics(all.toArray(NewTopic[]::new));
   }
   /**

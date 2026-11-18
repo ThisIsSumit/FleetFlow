@@ -6,12 +6,16 @@ export const api = axios.create({ baseURL: '/api/v1', withCredentials: true })
 api.interceptors.request.use((cfg) => { const t = useAuth.getState().accessToken; if (t) cfg.headers.Authorization = `Bearer ${t}`; return cfg })
 
 let inflight: Promise<string> | null = null
+const doRefresh = () => axios.post<AuthResponse>('/api/v1/auth/refresh', null, { withCredentials: true })
+  .then((r) => { useAuth.getState().setSession(r.data); return r.data.accessToken })
 /** Single-flight: concurrent 401s share one refresh call. Required because the backend rotates the token on every refresh
- *  and treats a replayed token as theft (it revokes all sessions). */
+ *  and treats a replayed token as theft (it revokes all sessions). Across tabs, a Web Lock makes refreshes take turns, so the
+ *  second tab sends the cookie the first one just received instead of replaying the rotated one. */
 export function refreshAccessToken(): Promise<string> {
-  inflight ??= axios.post<AuthResponse>('/api/v1/auth/refresh', null, { withCredentials: true })
-    .then((r) => { useAuth.getState().setSession(r.data); return r.data.accessToken })
-    .finally(() => { inflight = null })
+  if (!inflight) {
+    const run = typeof navigator !== 'undefined' && navigator.locks ? navigator.locks.request('ff-refresh', doRefresh).then((t) => t) : doRefresh()
+    inflight = run.finally(() => { inflight = null })
+  }
   return inflight
 }
 

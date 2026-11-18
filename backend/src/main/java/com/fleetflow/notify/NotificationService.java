@@ -12,7 +12,7 @@ public class NotificationService {
   }
   public List<Item> list(UUID user, UUID org, int limit) {
     return jdbc.query("SELECT n.*, (r.user_id IS NOT NULL) AS is_read FROM notifications n LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user_id = ? WHERE n.organization_id = ? ORDER BY n.created_at DESC LIMIT ?",
-        (rs, i) -> new Item(rs.getObject("id", UUID.class), rs.getString("type"), rs.getString("title"), rs.getString("message"), rs.getObject("order_id", UUID.class), rs.getTimestamp("created_at").toInstant(), rs.getBoolean("is_read")), user, org, Math.min(limit, 100));
+        (rs, i) -> new Item(rs.getObject("id", UUID.class), rs.getString("type"), rs.getString("title"), rs.getString("message"), rs.getObject("order_id", UUID.class), rs.getTimestamp("created_at").toInstant(), rs.getBoolean("is_read")), user, org, Math.max(1, Math.min(limit, 100)));
   }
   public long unread(UUID user, UUID org) {
     Long n = jdbc.queryForObject("SELECT count(*) FROM notifications n WHERE n.organization_id = ? AND n.created_at > now() - interval '30 days' AND NOT EXISTS (SELECT 1 FROM notification_reads r WHERE r.notification_id = n.id AND r.user_id = ?)", Long.class, org, user);

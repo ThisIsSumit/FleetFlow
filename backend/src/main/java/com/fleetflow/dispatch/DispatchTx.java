@@ -63,7 +63,7 @@ public class DispatchTx {
 
   /** Orders that found no driver. Cross-tenant on purpose: this is a system job. */
   @Transactional(readOnly = true)
-  public List<UUID> stuckOrderIds(Instant olderThan) { return orders.findTop100ByStatusAndUpdatedAtBefore(OrderStatus.DISPATCH_REQUESTED, olderThan).stream().map(o -> o.id).toList(); }
+  public List<UUID> stuckOrderIds(Instant olderThan) { return orders.findSweepableIds(olderThan); }
 
   /** One order per transaction, so one optimistic-lock conflict cannot roll back the rest of the sweep.
    *  Re-emits dispatch.requested, or, once maxAttempts is exceeded, fails the order and alerts a human. */
@@ -71,6 +71,8 @@ public class DispatchTx {
   public void resweepOne(UUID orderId, int maxAttempts) {
     var o = orders.findById(orderId).orElse(null);
     if (o == null || o.status != OrderStatus.DISPATCH_REQUESTED) return;
+    // Manual-dispatch organizations: the order waits for a human, so it must never burn retries or be auto-failed.
+    if (!settings.get(o.organizationId).autoDispatch()) return;
     o.dispatchAttempts++; o.updatedAt = Instant.now();
     if (o.dispatchAttempts > maxAttempts) {
       o.status = OrderStatus.FAILED;

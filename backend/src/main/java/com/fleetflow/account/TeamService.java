@@ -16,6 +16,7 @@ public class TeamService {
   public record Invitation(UUID id, String email, String role, Instant expiresAt) {}
   private final UserRepository users; private final SessionRepository sessions; private final AuthTokenService tokens; private final MailService mail;
   private final JdbcTemplate jdbc; private final OrganizationRepository orgs; private final String appUrl;
+  @org.springframework.beans.factory.annotation.Autowired private SessionRevocation revocation;
   public TeamService(UserRepository u, SessionRepository s, AuthTokenService t, MailService m, JdbcTemplate j, OrganizationRepository o, @Value("${fleetflow.app-url}") String appUrl) { users = u; sessions = s; tokens = t; mail = m; jdbc = j; orgs = o; this.appUrl = appUrl; }
   private static ApiException forbidden(String m) { return new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", m); }
   private static ApiException notFound() { return new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Member not found"); }
@@ -47,20 +48,21 @@ public class TeamService {
     if (users.existsByEmailIgnoreCase(email)) throw new ApiException(HttpStatus.CONFLICT, "EMAIL_TAKEN", "That email already has an account");
     String raw = tokens.create("INVITATION", a.organizationId(), null, email.toLowerCase(), role.name(), Duration.ofDays(7), driverId);
     String org = orgs.findById(a.organizationId()).map(Organization::getName).orElse("your team");
-    mail.send(email, "You're invited to " + org + " on FleetFlow", "Join as " + role + ": " + appUrl + "/accept-invitation?token=" + raw);
+    mail.sendAfterCommit(email, "You're invited to " + org + " on FleetFlow", "Join as " + role + ": " + appUrl + "/accept-invitation?token=" + raw);
   }
   @Transactional public Member changeRole(UUID id, Role role) {
     var a = TenantContext.current(); assertCanGrant(a, role); var t = target(a, id);
-    t.setRole(role); users.save(t); sessions.deleteByUserId(t.getId()); // force re-login so the new role is in their next token
+    t.setRole(role); users.save(t); revocation.revokeUser(t.getId()); // force re-login so the new role is in their next token
     return new Member(t.getId(), t.getName(), t.getEmail(), t.getRole(), t.isEnabled(), t.isEmailVerified());
   }
   @Transactional public Member setEnabled(UUID id, boolean enabled) {
     var t = target(TenantContext.current(), id);
-    t.setEnabled(enabled); users.save(t); if (!enabled) sessions.deleteByUserId(t.getId());
+    t.setEnabled(enabled); users.save(t); if (!enabled) revocation.revokeUser(t.getId());
     return new Member(t.getId(), t.getName(), t.getEmail(), t.getRole(), t.isEnabled(), t.isEmailVerified());
   }
   @Transactional public void remove(UUID id) {
     var t = target(TenantContext.current(), id);
+    revocation.revokeUser(t.getId());
     jdbc.update("UPDATE drivers SET user_id = NULL WHERE user_id = ?", t.getId());
     users.delete(t);
   }

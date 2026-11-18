@@ -48,19 +48,24 @@ public class FleetService {
   // ---- vehicles ----
   @Transactional
   public VehicleDto createVehicle(VehicleRequest r) {
-    UUID org = TenantContext.organizationId();
-    if (vehicles.existsByOrganizationIdAndRegistrationNumberIgnoreCase(org, r.registrationNumber()))
-      throw new ApiException(HttpStatus.CONFLICT, "DUPLICATE_REGISTRATION", "Registration number already exists");
-    var v = new Vehicle(); v.organizationId = org; v.registrationNumber = r.registrationNumber().trim().toUpperCase();
+    UUID org = TenantContext.organizationId(); String reg = normalizeReg(r.registrationNumber());
+    if (vehicles.existsByOrganizationIdAndRegistrationNumberIgnoreCase(org, reg)) throw duplicateReg();
+    var v = new Vehicle(); v.organizationId = org; v.registrationNumber = reg;
     v.type = r.type(); v.capacityKg = r.capacityKg(); if (r.status() != null) v.status = r.status();
     return vehicleDto(vehicles.save(v), null);
   }
   @Transactional
   public VehicleDto updateVehicle(UUID id, VehicleRequest r) {
-    var v = vehicles.findByIdAndOrganizationId(id, TenantContext.organizationId()).orElseThrow(() -> notFound("Vehicle"));
-    v.type = r.type(); v.capacityKg = r.capacityKg(); if (r.status() != null) v.status = r.status();
-    return vehicleDto(v, null);
+    UUID org = TenantContext.organizationId();
+    var v = vehicles.findByIdAndOrganizationId(id, org).orElseThrow(() -> notFound("Vehicle"));
+    String reg = normalizeReg(r.registrationNumber());
+    if (!reg.equals(v.registrationNumber) && vehicles.existsByOrganizationIdAndRegistrationNumberIgnoreCase(org, reg)) throw duplicateReg();
+    v.registrationNumber = reg; v.type = r.type(); v.capacityKg = r.capacityKg(); if (r.status() != null) v.status = r.status();
+    var driver = drivers.findByOrganizationIdAndVehicleIdIn(org, List.of(v.id)).stream().findFirst().map(d -> d.id).orElse(null);
+    return vehicleDto(v, driver);
   }
+  private static String normalizeReg(String reg) { return reg.trim().toUpperCase(); }
+  private static ApiException duplicateReg() { return new ApiException(HttpStatus.CONFLICT, "DUPLICATE_REGISTRATION", "Registration number already exists"); }
   @Transactional(readOnly = true)
   public PageDto<VehicleDto> listVehicles(int page, int size) {
     UUID org = TenantContext.organizationId();
@@ -89,9 +94,17 @@ public class FleetService {
     try { return driverDto(drivers.saveAndFlush(d)); }
     catch (DataIntegrityViolationException e) { throw new ApiException(HttpStatus.CONFLICT, "VEHICLE_TAKEN", "Vehicle is already assigned to a driver"); }
   }
+  /** Staff override. Same row lock and capacity rule as the driver's own change; BUSY stays system-managed (set at the workload limit).
+   *  Unlike drivers, staff may take a driver OFFLINE/ON_BREAK mid-delivery (e.g. phone died): waiting orders are reassigned and
+   *  in-progress ones raise an alert via driver.unavailable. */
   @Transactional
   public DriverDto setDriverStatus(UUID id, DriverStatus s) {
-    var d = drivers.findByIdAndOrganizationId(id, TenantContext.organizationId()).orElseThrow(() -> notFound("Driver"));
+    UUID org = TenantContext.organizationId();
+    if (s == DriverStatus.BUSY) throw new ApiException(HttpStatus.BAD_REQUEST, "SYSTEM_CONTROLLED", "BUSY is set automatically when a driver reaches their delivery limit");
+    var d = lockDriver(id, org);
+    if (d == null) throw notFound("Driver");
+    if (s == DriverStatus.AVAILABLE && orders.countByDriverIdAndStatusIn(d.id, ACTIVE_ORDER) >= settings.get(org).maxWorkload())
+      throw new ApiException(HttpStatus.CONFLICT, "AT_CAPACITY", "This driver is at their delivery limit");
     return applyDriverStatus(d, s);
   }
   /** Offline drivers leave the GEO index; becoming unavailable emits driver.unavailable so waiting orders are reassigned. */

@@ -10,13 +10,14 @@ import java.io.IOException;
 import java.util.List;
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
-  private final JwtService jwt;
-  public JwtAuthFilter(JwtService jwt) { this.jwt = jwt; }
+  private final JwtService jwt; private final SessionRevocation revocation;
+  public JwtAuthFilter(JwtService jwt, SessionRevocation revocation) { this.jwt = jwt; this.revocation = revocation; }
   @Override protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain) throws ServletException, IOException {
     String h = req.getHeader("Authorization");
     if (h != null && h.startsWith("Bearer ")) {
       try {
         AuthPrincipal p = jwt.parse(h.substring(7));
+        if (revocation.isRevoked(p.sessionId())) { chain.doFilter(req, res); return; } // logged out / revoked / disabled: unauthenticated
         var auth = new UsernamePasswordAuthenticationToken(p, null, List.of(new SimpleGrantedAuthority("ROLE_" + p.role().name())));
         SecurityContextHolder.getContext().setAuthentication(auth);
       } catch (Exception ignored) { SecurityContextHolder.clearContext(); }

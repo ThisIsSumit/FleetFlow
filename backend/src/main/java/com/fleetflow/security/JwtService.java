@@ -23,6 +23,8 @@ public class JwtService {
         .claim("role", u.getRole().name()).claim("sid", sessionId.toString())
         .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(ttl))).signWith(key).compact();
   }
+  /** Verifies the token and returns when it expires (used to close WebSockets opened with it). */
+  public Instant expiry(String token) { return Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload().getExpiration().toInstant(); }
   public AuthPrincipal parse(String token) {
     Claims c = Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload();
     return new AuthPrincipal(UUID.fromString(c.getSubject()), UUID.fromString(c.get("org", String.class)),

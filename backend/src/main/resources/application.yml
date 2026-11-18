@@ -1,7 +1,7 @@
 spring:
   application.name: fleetflow
   flyway:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/fleetflow}
+    url: ${spring.datasource.url}   # always the same database as the app (tests override spring.datasource.url)
     user: ${DB_ADMIN_USER:${spring.datasource.username}}
     password: ${DB_ADMIN_PASSWORD:${spring.datasource.password}}
   mail:
@@ -24,13 +24,19 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:29092}
     producer:
       acks: all
-      properties: {enable.idempotence: true}
+      # Fail fast when the broker is down: the outbox relay retries later, so a send must never block the scheduler for a minute (Kafka's default).
+      properties: {enable.idempotence: true, max.block.ms: 5000, request.timeout.ms: 5000, delivery.timeout.ms: 10000}
     consumer:
       auto-offset-reset: earliest
       enable-auto-commit: false
+  task.scheduling.pool.size: 4   # default is 1: outbox relay, sweeper, GEO janitor, delay scanner and retention would queue behind each other
   jpa:
     hibernate.ddl-auto: validate
     open-in-view: false
+server:
+  # Behind a reverse proxy / load balancer set native or framework so client IPs (rate limits, session list) are real.
+  # Leave "none" when exposed directly: otherwise clients could spoof X-Forwarded-For to dodge IP rate limits.
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
 resend:
   api-key: ${RESEND_API_KEY:}    
 fleetflow:
@@ -42,14 +48,16 @@ fleetflow:
   geocoder: {base-url: "${GEOCODER_URL:https://nominatim.openstreetmap.org}", country-codes: "${GEOCODER_COUNTRIES:in}", user-agent: "${GEOCODER_USER_AGENT:FleetFlow/0.1 (set GEOCODER_USER_AGENT with a contact address)}", max-per-second: "${GEOCODER_MAX_PER_SECOND:1}"}
   seed: {enabled: "${SEED_DEMO:false}", password: "${DEMO_PASSWORD:}"}
   dev-tools.enabled: ${DEV_TOOLS:false}
-  rate-limit: {login-per-minute: 5, orders-per-minute: "${RATE_LIMIT_ORDERS:100}", location-per-minute: 60}
+  rate-limit: {login-per-minute: 5, orders-per-minute: "${RATE_LIMIT_ORDERS:100}", location-per-minute: 60, signup-per-hour: 10, token-links-per-minute: 10, refresh-per-minute: 60}
   events.publisher: ${EVENTS_PUBLISHER:log}   # log | kafka
+  events.local-delivery: ${EVENTS_LOCAL_DELIVERY:true}   # with the log publisher, also handle events in-process
   dispatch: {sweep-after-seconds: 30, max-attempts: 20}
   jwt:
     secret: ${JWT_SECRET}
     access-ttl-seconds: 900
   refresh:
     ttl-days: 30
+    reuse-grace-seconds: 30   # a rotated token replayed within this window is a concurrent refresh (multi-tab), not theft
     cookie-secure: ${COOKIE_SECURE:true}
   cors-origins: ${CORS_ORIGINS:http://localhost:5173}
 management:

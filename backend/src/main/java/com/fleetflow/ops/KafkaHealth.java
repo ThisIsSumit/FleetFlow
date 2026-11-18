@@ -11,9 +11,10 @@ import java.util.concurrent.TimeUnit;
 /** Broker reachability (cached 10 s) and consumer liveness. Reports DISABLED when running with the log publisher. */
 @Component
 public class KafkaHealth {
-  private final boolean enabled; private final KafkaAdmin admin; private final ObjectProvider<KafkaListenerEndpointRegistry> registry;
+  private final boolean enabled, localDelivery; private final KafkaAdmin admin; private final ObjectProvider<KafkaListenerEndpointRegistry> registry;
   private volatile long at; private volatile String cached = "DOWN";
-  public KafkaHealth(@Value("${fleetflow.events.publisher}") String publisher, KafkaAdmin admin, ObjectProvider<KafkaListenerEndpointRegistry> registry) { this.enabled = "kafka".equals(publisher); this.admin = admin; this.registry = registry; }
+  public KafkaHealth(@Value("${fleetflow.events.publisher}") String publisher, @Value("${fleetflow.events.local-delivery:true}") boolean localDelivery,
+      KafkaAdmin admin, ObjectProvider<KafkaListenerEndpointRegistry> registry) { this.enabled = "kafka".equals(publisher); this.localDelivery = localDelivery; this.admin = admin; this.registry = registry; }
   public synchronized String broker() {
     if (!enabled) return "DISABLED";
     if (System.currentTimeMillis() - at < 10_000) return cached;
@@ -22,7 +23,7 @@ public class KafkaHealth {
     at = System.currentTimeMillis(); return cached;
   }
   public String consumers() {
-    if (!enabled) return "DISABLED";
+    if (!enabled) return localDelivery ? "UP" : "DISABLED"; // without Kafka, events are handled in-process (LoggingEventPublisher)
     var r = registry.getIfAvailable(); if (r == null || r.getListenerContainers().isEmpty()) return "DOWN";
     return r.getListenerContainers().stream().allMatch(MessageListenerContainer::isRunning) ? "UP" : "DEGRADED";
   }

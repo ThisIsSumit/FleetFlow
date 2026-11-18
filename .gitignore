@@ -5,3 +5,8 @@ target/
 *.log
 .idea/
 .vscode/
+# Eclipse/VS Code Java build output
+bin/
+.classpath
+.project
+.settings/

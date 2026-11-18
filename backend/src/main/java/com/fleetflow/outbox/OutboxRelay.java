@@ -8,6 +8,8 @@ import java.time.Instant;
 public class OutboxRelay {
   private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
   static final int MAX_ATTEMPTS = 10;
+  /** After this many failures in a row the broker is assumed down: stop the batch instead of waiting out a timeout per row. */
+  static final int GIVE_UP_AFTER_CONSECUTIVE_FAILURES = 3;
   @org.springframework.beans.factory.annotation.Autowired private com.fleetflow.ops.FaultInjector faults;
   private final OutboxRepository repo; private final EventPublisher publisher;
   public OutboxRelay(OutboxRepository repo, EventPublisher publisher) { this.repo = repo; this.publisher = publisher; }
@@ -18,12 +20,15 @@ public class OutboxRelay {
   @Scheduled(fixedDelayString = "${fleetflow.outbox.poll-ms:500}")
   @Transactional
   public void drain() {
+    int failuresInARow = 0;
     for (var e : repo.lockBatch(30)) {
+      if (failuresInARow >= GIVE_UP_AFTER_CONSECUTIVE_FAILURES) break; // untouched rows stay PENDING for the next poll, attempts unchanged
       try {
         faults.maybeFail(com.fleetflow.ops.FaultInjector.Fault.KAFKA_UNAVAILABLE);
         publisher.publish(e.topic, e.partitionKey, e.payload);
-        e.status = "SENT"; e.sentAt = Instant.now(); e.lastError = null;
+        e.status = "SENT"; e.sentAt = Instant.now(); e.lastError = null; failuresInARow = 0;
       } catch (Exception ex) {
+        failuresInARow++;
         e.attempts++;
         e.lastError = String.valueOf(ex.getMessage()).substring(0, Math.min(500, String.valueOf(ex.getMessage()).length()));
         if (e.attempts >= MAX_ATTEMPTS) { e.status = "FAILED"; log.error("Outbox event {} moved to FAILED", e.id); }

@@ -13,6 +13,11 @@ public class Repos {
   public interface SessionRepository extends JpaRepository<RefreshSession, UUID> {
     Optional<RefreshSession> findByTokenHash(String hash);
     Optional<RefreshSession> findByPreviousTokenHash(String hash);
+    /** Row-locking lookups for refresh: concurrent refreshes of one session serialize instead of overwriting each other. */
+    @Query(value = "SELECT * FROM refresh_sessions WHERE token_hash = :h FOR UPDATE", nativeQuery = true)
+    Optional<RefreshSession> lockByTokenHash(@org.springframework.data.repository.query.Param("h") String hash);
+    @Query(value = "SELECT * FROM refresh_sessions WHERE previous_token_hash = :h FOR UPDATE", nativeQuery = true)
+    Optional<RefreshSession> lockByPreviousTokenHash(@org.springframework.data.repository.query.Param("h") String hash);
     List<RefreshSession> findByUserIdOrderByLastUsedAtDesc(UUID userId);
     Optional<RefreshSession> findByIdAndUserId(UUID id, UUID userId);
     @Modifying @Transactional long deleteByUserId(UUID userId);

@@ -1,7 +1,6 @@
 package com.fleetflow.account;
 
 import com.resend.Resend;
-import com.resend.core.exception.ResendException;
 import com.resend.services.emails.model.CreateEmailOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,7 +49,7 @@ public class ResendMailService implements MailService {
                             : "?"
             );
 
-        } catch (ResendException e) {
+        } catch (Exception e) { // any failure (API, network, misconfiguration) is logged, never propagated
 
             log.error(
                     "Resend email delivery failed (recipient domain {}): {}",

@@ -63,7 +63,8 @@ public class DriverGeoService {
         UUID org = UUID.fromString(o);
         var stale = redis.opsForZSet().rangeByScore(seen(org), 0, cutoff);
         if (stale == null || stale.isEmpty()) continue;
-        redis.opsForGeo().remove(key(org), stale.toArray().toString()); redis.opsForZSet().remove(seen(org), stale.toArray()); n += stale.size();
+        String[] ids = stale.toArray(new String[0]);
+        redis.opsForGeo().remove(key(org), ids); redis.opsForZSet().remove(seen(org), (Object[]) ids); n += ids.length;
       }
     } catch (Exception e) { log.debug("Geo janitor skipped: {}", e.toString()); }
     return n;

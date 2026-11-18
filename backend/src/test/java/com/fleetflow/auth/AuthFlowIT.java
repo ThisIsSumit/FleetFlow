@@ -21,10 +21,12 @@ import static org.junit.jupiter.api.Assertions.*;
 class AuthFlowIT {
   @Container static PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16-alpine");
   @DynamicPropertySource static void props(DynamicPropertyRegistry r) {
+    r.add("fleetflow.rate-limit.signup-per-hour", () -> "10000"); // these tests may share a local Redis across runs
     r.add("spring.datasource.url", pg::getJdbcUrl); r.add("spring.datasource.username", pg::getUsername);
     r.add("spring.datasource.password", pg::getPassword);
     r.add("fleetflow.jwt.secret", () -> "test-secret-test-secret-test-secret-123456");
     r.add("fleetflow.refresh.cookie-secure", () -> "false");
+    r.add("fleetflow.refresh.reuse-grace-seconds", () -> "1");
   }
   @Autowired MockMvc mvc; @Autowired ObjectMapper om;
 
@@ -42,8 +44,16 @@ class AuthFlowIT {
     var r1 = mvc.perform(post("/api/v1/auth/refresh").cookie(old)).andExpect(status().isOk()).andReturn();
     Cookie fresh = r1.getResponse().getCookie("ff_refresh");
     assertNotEquals(old.getValue(), fresh.getValue());
+    Thread.sleep(1500);                                                                             // past the reuse grace window
     mvc.perform(post("/api/v1/auth/refresh").cookie(old)).andExpect(status().isUnauthorized());   // replay detected
     mvc.perform(post("/api/v1/auth/refresh").cookie(fresh)).andExpect(status().isUnauthorized()); // family revoked
+  }
+
+  @Test void concurrentRefreshWithinGraceIsNotTreatedAsTheft() throws Exception {
+    Cookie old = signup("tabs@x.dev", "Tabs Org").getResponse().getCookie("ff_refresh");
+    mvc.perform(post("/api/v1/auth/refresh").cookie(old)).andExpect(status().isOk());              // tab 1
+    var r2 = mvc.perform(post("/api/v1/auth/refresh").cookie(old)).andExpect(status().isOk()).andReturn(); // tab 2, same cookie
+    mvc.perform(post("/api/v1/auth/refresh").cookie(r2.getResponse().getCookie("ff_refresh"))).andExpect(status().isOk()); // session survives
   }
 
   @Test void tenantIsolationAndRbac() throws Exception {

@@ -20,10 +20,13 @@ public class AuthService {
   // Precomputed hash so unknown-email logins cost the same as wrong-password logins.
   private final String dummyHash;
   private final OrganizationRepository orgs; private final UserRepository users; private final SessionRepository sessions;
-  private final PasswordEncoder encoder; private final JwtService jwt; private final long refreshDays;
+  private final PasswordEncoder encoder; private final JwtService jwt; private final long refreshDays; private final Duration reuseGrace;
+  @org.springframework.beans.factory.annotation.Autowired private com.fleetflow.security.SessionRevocation revocation;
+  @org.springframework.beans.factory.annotation.Autowired private com.fleetflow.common.RateLimiter limiter;
   public AuthService(OrganizationRepository orgs, UserRepository users, SessionRepository sessions, PasswordEncoder encoder,
-      JwtService jwt, @Value("${fleetflow.refresh.ttl-days}") long refreshDays) {
+      JwtService jwt, @Value("${fleetflow.refresh.ttl-days}") long refreshDays, @Value("${fleetflow.refresh.reuse-grace-seconds:30}") long graceSeconds) {
     this.orgs = orgs; this.users = users; this.sessions = sessions; this.encoder = encoder; this.jwt = jwt; this.refreshDays = refreshDays;
+    this.reuseGrace = Duration.ofSeconds(graceSeconds);
     this.dummyHash = encoder.encode("dummy-password-for-timing");
   }
   static String newToken() { byte[] b = new byte[32]; RNG.nextBytes(b); return Base64.getUrlEncoder().withoutPadding().encodeToString(b); }
@@ -56,23 +59,33 @@ public class AuthService {
 
   @Transactional
   public Issued login(LoginRequest r, String ua, String ip) {
+    // Per-account limit on top of the per-IP one in RateLimitFilter: slows password guessing spread across many IPs.
+    if (!limiter.hit("rl:login:acct:" + sha256(r.email().trim().toLowerCase()), 20, Duration.ofMinutes(15)).allowed())
+      throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "Too many sign-in attempts for this account. Try again later.");
     var u = users.findByEmailIgnoreCase(r.email()).orElse(null);
     boolean ok = encoder.matches(r.password(), u != null ? u.getPasswordHash() : dummyHash);
     if (u == null || !ok || !u.isEnabled()) throw unauthorized("Invalid credentials");
     return issue(u, orgName(u.getOrganizationId()), ua, ip);
   }
 
-  /** Rotation with reuse detection: replaying an already-rotated token revokes every session of that user. */
+  /** Rotation with reuse detection: replaying an already-rotated token revokes every session of that user, except within
+   *  reuse-grace-seconds of the rotation (concurrent refreshes, e.g. two tabs reloading together), where it is treated as a concurrent refresh of the same browser and simply rotated again.
+   *  The row lock makes the second of two simultaneous refreshes wait for the first and then take the grace path. */
   @Transactional(noRollbackFor = ApiException.class)
   public Issued refresh(String rawToken) {
     if (rawToken == null || rawToken.isBlank()) throw unauthorized("Missing refresh token");
     String h = sha256(rawToken);
-    var s = sessions.findByTokenHash(h).orElse(null);
+    var s = sessions.lockByTokenHash(h).orElse(null);
     if (s == null) {
-      sessions.findByPreviousTokenHash(h).ifPresent(stolen -> sessions.deleteByUserId(stolen.getUserId()));
-      throw unauthorized("Invalid refresh token");
+      var prev = sessions.lockByPreviousTokenHash(h).orElse(null);
+      if (prev == null) throw unauthorized("Invalid refresh token");
+      if (prev.getLastUsedAt().isBefore(Instant.now().minus(reuseGrace))) {
+        revocation.revokeUser(prev.getUserId()); // replay after the grace window: treat as theft
+        throw unauthorized("Invalid refresh token");
+      }
+      s = prev;
     }
-    if (s.getExpiresAt().isBefore(Instant.now())) { sessions.delete(s); throw unauthorized("Refresh token expired"); }
+    if (s.getExpiresAt().isBefore(Instant.now())) { revocation.revokeSession(s); throw unauthorized("Refresh token expired"); }
     var u = users.findByIdAndOrganizationId(s.getUserId(), s.getOrganizationId()).filter(AppUser::isEnabled)
         .orElseThrow(() -> unauthorized("User unavailable"));
     String next = newToken();
@@ -81,8 +94,8 @@ public class AuthService {
     return build(u, orgName(u.getOrganizationId()), s, next);
   }
 
-  @Transactional public void logout(String rawToken) { if (rawToken != null) sessions.findByTokenHash(sha256(rawToken)).ifPresent(sessions::delete); }
-  @Transactional public void logoutAll(UUID userId) { sessions.deleteByUserId(userId); }
+  @Transactional public void logout(String rawToken) { if (rawToken != null) sessions.findByTokenHash(sha256(rawToken)).ifPresent(revocation::revokeSession); }
+  @Transactional public void logoutAll(UUID userId) { revocation.revokeUser(userId); }
 
   public List<SessionDto> sessions(UUID userId, UUID currentSid) {
     return sessions.findByUserIdOrderByLastUsedAtDesc(userId).stream()
@@ -91,7 +104,7 @@ public class AuthService {
   @Transactional
   public void revoke(UUID userId, UUID sid) {
     // scoped by userId: a user can never revoke someone else's session
-    sessions.delete(sessions.findByIdAndUserId(sid, userId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Session not found")));
+    revocation.revokeSession(sessions.findByIdAndUserId(sid, userId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Session not found")));
   }
   public UserDto me(UUID userId, UUID orgId) {
     var u = users.findByIdAndOrganizationId(userId, orgId).orElseThrow(() -> unauthorized("User unavailable"));

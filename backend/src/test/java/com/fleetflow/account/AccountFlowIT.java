@@ -27,6 +27,7 @@ class AccountFlowIT {
   }
   @Container static PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16-alpine");
   @DynamicPropertySource static void props(DynamicPropertyRegistry r) {
+    r.add("fleetflow.rate-limit.signup-per-hour", () -> "10000"); // these tests may share a local Redis across runs
     r.add("spring.datasource.url", pg::getJdbcUrl); r.add("spring.datasource.username", pg::getUsername); r.add("spring.datasource.password", pg::getPassword);
     r.add("fleetflow.jwt.secret", () -> "test-secret-test-secret-test-secret-123456"); r.add("fleetflow.refresh.cookie-secure", () -> "false");
     r.add("fleetflow.outbox.poll-ms", () -> "3600000");
